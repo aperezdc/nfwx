@@ -52,7 +52,7 @@ SOAP_TEMPLATE = """\
     </soap:Body>
 </soap:Envelope>"""
 
-# (MethodName, PayloadTemplate)
+# (MethodName, ResponseAttributeName, PayloadTemplate)
 SOAP_GET_PRODUCT_LIST = (
     "GetProductList",
     "GetProductListResponse",
