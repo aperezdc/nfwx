@@ -1,0 +1,193 @@
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+# vim:fenc=utf-8
+#
+# Copyright © 2012 Adrian Perez <aperez@igalia.com>
+#
+# Distributed under terms of the MIT license.
+
+from SOAPpy.Parser import parseSOAP
+import httplib
+import os, cmd
+
+
+try:
+    URL_INDEX = int(os.environ.get("NFWX_URL_INDEX", "0", 10))
+except:
+    URL_INDEX = 0
+
+URLS = (
+    ('https://www.caresuite.nokia.com/caresuite/get_params.do?application_id=2',
+     'www.caresuite.nokia.com', '/caresuite/CareSuite?WSDL'),
+    ('https://www.dsut.online.nokia.com/oti/get_params.do?application_id=2',
+     'www.dsut.online.nokia.com', '/oti/CareSuite?WSDL'),
+    ('https://www.dsut-qa.online.nokia.com/oti/get_params.do?application_id=2',
+     'www.dsut-qa.online.nokia.com', '/oti/CareSuite?WSDL'),
+)
+
+def getSid():
+    from urllib import urlopen
+    resp = urlopen(URLS[URL_INDEX][0])
+    sid = resp.headers["set-cookie"]
+    assert sid.startswith("JSESSIONID=")
+    return sid.split(";")[0][11:]
+
+SID = os.environ.get("NFWX_SID", None)
+if SID is None:
+    SID = getSid()
+
+SOAP_TEMPLATE = """\
+<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope
+        xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+        xmlns:soapenc="http://schemas.xmlsoap.org/soap/encoding/"
+        xmlns:tns="http://www.posti-care_suite.posti.nokia.com/POSTI_CareSuite_Interface.wsdl"
+        xmlns:types="http://www.posti-care_suite.posti.nokia.com/POSTI_CareSuite_Interface.wsdl/encodedTypes"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+    <soap:Body soap:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+        <tns:%(soapMethodName)s>
+            %(soapPayload)s
+        </tns:%(soapMethodName)s>
+    </soap:Body>
+</soap:Envelope>"""
+
+# (MethodName, PayloadTemplate)
+SOAP_GET_PRODUCT_LIST = (
+    "GetProductList",
+    "GetProductListResponse",
+    """\
+    <string xsi:type="xsd:string">%(sid)s</string>
+    <string0 xsi:type="xsd:string"/>
+    """)
+SOAP_GET_RELEASES_FOR_PRODUCT = (
+    "GetReleasesForProduct",
+    "GetReleasesForProductResponse",
+    """\
+    <string xsi:type="xsd:string">%(sid)s</string>
+    <longVal xsi:type="xsd:long">%(productId)i</longVal>
+    """)
+SOAP_GET_RELEASE_VARIANTS = (
+    "GetReleaseVariants",
+    "GetReleaseVariantsResponse",
+    """\
+    <string xsi:type="xsd:string">%(sid)s</string>
+    <longVal xsi:type="xsd:long">%(releaseId)i</longVal>
+    """)
+
+def soapRequest(soap, **args):
+    body = SOAP_TEMPLATE % dict(soapMethodName = soap[0],
+                                soapPayload = soap[2] % args)
+    conn = httplib.HTTPSConnection(URLS[URL_INDEX][1])
+    conn.request("POST", URLS[URL_INDEX][2], body, {"Content-Type": "text/xml"})
+    resp = conn.getresponse()
+    if resp.status != 200:
+        raise Exception("HTTP response %i" % resp.status)
+    rval = getattr(parseSOAP(resp.read()), soap[1]).result
+    resp.close()
+    conn.close()
+    return rval
+
+
+_PRODUCT_LIST = None
+def getProductList():
+    global _PRODUCT_LIST
+    if _PRODUCT_LIST is None:
+        _PRODUCT_LIST = soapRequest(SOAP_GET_PRODUCT_LIST, sid=SID)
+    return _PRODUCT_LIST
+
+_RELEASES_FOR_PRODUCT = {}
+def getReleasesForProduct(productId):
+    global _RELEASES_FOR_PRODUCT
+    if productId not in _RELEASES_FOR_PRODUCT:
+        _RELEASES_FOR_PRODUCT[productId] = soapRequest(
+                SOAP_GET_RELEASES_FOR_PRODUCT,
+                productId=productId,
+                sid=SID)
+    return _RELEASES_FOR_PRODUCT[productId]
+
+_RELEASE_VARIANTS = {}
+def getReleaseVariants(releaseId):
+    global _RELEASE_VARIANTS
+    if releaseId not in _RELEASE_VARIANTS:
+        _RELEASE_VARIANTS[releaseId] = soapRequest(
+                SOAP_GET_RELEASE_VARIANTS,
+                releaseId=releaseId,
+                sid=SID)
+    return _RELEASE_VARIANTS[releaseId]
+
+
+class Cli(cmd.Cmd):
+    prompt = "(nfwx) "
+
+    def do_EOF(self, arg):
+        return True
+
+    def do_sid(self, arg):
+        """Print the session ID."""
+        print SID
+
+    def do_products(self, arg):
+        """List product-ids and their names."""
+        for item in getProductList():
+            if not arg or arg in item.marketName:
+                print "%-20i %s" % (item.productID, item.marketName)
+
+    def do_releases(self, arg):
+        """List release-ids and versions for a given product-id."""
+        try:
+            arg = int(arg, 10)
+        except ValueError:
+            import sys
+            print >> sys.stderr, "Product id '%s' is not an integer" % arg
+
+        for item in getReleasesForProduct(arg):
+            print "%-20i %s" % (item.releaseID, item.version)
+
+    def do_variants(self, arg):
+        """List variant-ids and their names for a given release-id."""
+        try:
+            arg = int(arg, 10)
+        except ValueError:
+            import sys
+            print >> sys.stderr, "Release id '%s' is not an integer" % arg
+
+        for item in getReleaseVariants(arg):
+            vid = "%i:%i" % (arg, item.variantID)
+            print "%-20s %s (%i files)" % (vid, item.name, len(item.files))
+
+    def do_urls(self, arg):
+        """List file URLs for a given release-id:variant-id."""
+        rid, vid = arg.split(":", 1)
+        try:
+            rid = int(rid, 10)
+        except ValueError:
+            import sys
+            print >> sys.stderr, "Release id '%s' is not an integer" % rid
+        try:
+            vid = int(vid, 10)
+        except ValueError:
+            import sys
+            print >> sys.stderr, "Variant id '%s' is not an integer" % vid
+
+        for item in getReleaseVariants(rid):
+            if item.variantID == vid:
+                break
+
+        if item.variantID != vid:
+            import sys
+            print >> sys.stderr, "No such variantID '%i'" % vid
+            return
+
+        for fileinfo in item.files:
+            print fileinfo.downloadURL
+
+
+if __name__ == "__main__":
+    import sys
+    cli = Cli()
+    if len(sys.argv) > 1:
+        cli.onecmd(" ".join(sys.argv[1:]))
+    else:
+        cli.cmdloop()
+
