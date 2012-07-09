@@ -121,6 +121,7 @@ class Cli(cmd.Cmd):
     prompt = "(nfwx) "
 
     def do_EOF(self, arg):
+        """When end-of-file is entered (Ctrl-D), the shell is exited."""
         return True
 
     def do_sid(self, arg):
@@ -181,6 +182,11 @@ class Cli(cmd.Cmd):
 
         for fileinfo in item.files:
             print fileinfo.downloadURL
+
+    def do_help(self, arg):
+        """Shows information about commands."""
+        return cmd.Cmd.do_help(self, arg)
+
 
 
 if __name__ == "__main__":
