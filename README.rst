@@ -2,6 +2,15 @@
 NFWX - Nokia Firmware Explorer
 ==============================
 
+.. important::
+
+   As of April 2013 this tool does *not* work anymore. Nokia `has
+   closed the access to their firmware download service`__ and it
+   keeps failing with HTTP 500 status codes. Nevertheless, the
+   code for ``nfwx`` will remain publicly available.
+
+__ http://www.allaboutsymbian.com/flow/item/17340_Nokia_news_shorts_Navifirm_acc.php
+
 NFWX is a small command-line tool to explore the available firmware
 downloads for Nokia devices, which can be obtained using the same
 SOAP services as used by the Nokia-supplied tools to install the
